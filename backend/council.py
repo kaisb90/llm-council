@@ -15,7 +15,10 @@ async def stage1_collect_responses(user_query: str) -> List[Dict[str, Any]]:
     Returns:
         List of dicts with 'model' and 'response' keys
     """
-    messages = [{"role": "user", "content": user_query}]
+    messages = [
+        {"role": "system", "content": "Du bist ein hilfreicher Assistent. Bitte antworte auf die Fragen des Nutzers ausführlich, präzise und ausschließlich auf Deutsch."},
+        {"role": "user", "content": user_query}
+    ]
 
     # Query all models in parallel
     responses = await query_models_parallel(COUNCIL_MODELS, messages)
@@ -61,36 +64,36 @@ async def stage2_collect_rankings(
         for label, result in zip(labels, stage1_results)
     ])
 
-    ranking_prompt = f"""You are evaluating different responses to the following question:
+    ranking_prompt = f"""Du bewertest verschiedene Antworten auf die folgende Frage:
 
-Question: {user_query}
+Frage: {user_query}
 
-Here are the responses from different models (anonymized):
+Hier sind die Antworten verschiedener Modelle (anonymisiert):
 
 {responses_text}
 
-Your task:
-1. First, evaluate each response individually. For each response, explain what it does well and what it does poorly.
-2. Then, at the very end of your response, provide a final ranking.
+Deine Aufgabe:
+1. Bewerte zuerst jede Antwort individuell. Erkläre für jede Antwort, was sie gut macht und was sie schlecht macht.
+2. Gib ganz am Ende deiner Antwort eine abschließende Rangliste an.
 
-IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
-- Start with the line "FINAL RANKING:" (all caps, with colon)
-- Then list the responses from best to worst as a numbered list
-- Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
-- Do not add any other text or explanations in the ranking section
+WICHTIG: Deine abschließende Rangliste MUSS EXAKT wie folgt formatiert sein:
+- Beginne mit der Zeile "FINAL RANKING:" (alles in Großbuchstaben, mit Doppelpunkt)
+- Liste dann die Antworten von der besten zur schlechtesten als nummerierte Liste auf
+- Jede Zeile sollte so aussehen: Nummer, Punkt, Leerzeichen, dann NUR das Antwort-Label (z.B. "1. Response A")
+- Füge keine weiteren Texte oder Erklärungen im Ranking-Abschnitt hinzu
 
-Example of the correct format for your ENTIRE response:
+Beispiel für das korrekte Format deiner GESAMTEN Antwort:
 
-Response A provides good detail on X but misses Y...
-Response B is accurate but lacks depth on Z...
-Response C offers the most comprehensive answer...
+Response A liefert gute Details zu X, verfehlt aber Y...
+Response B ist genau, aber es fehlt Tiefe bei Z...
+Response C bietet die umfassendste Antwort...
 
 FINAL RANKING:
 1. Response C
 2. Response A
 3. Response B
 
-Now provide your evaluation and ranking:"""
+Bitte gib nun deine Bewertung und das Ranking ab:"""
 
     messages = [{"role": "user", "content": ranking_prompt}]
 
@@ -139,22 +142,22 @@ async def stage3_synthesize_final(
         for result in stage2_results
     ])
 
-    chairman_prompt = f"""You are the Chairman of an LLM Council. Multiple AI models have provided responses to a user's question, and then ranked each other's responses.
+    chairman_prompt = f"""Du bist der Vorsitzende eines Rates von KI-Modellen (LLM Council). Mehrere KI-Modelle haben Antworten auf die Frage eines Nutzers geliefert und sich gegenseitig bewertet.
 
-Original Question: {user_query}
+Ursprüngliche Frage: {user_query}
 
-STAGE 1 - Individual Responses:
+STAGE 1 - Individuelle Antworten:
 {stage1_text}
 
-STAGE 2 - Peer Rankings:
+STAGE 2 - Bewertungen der Peers:
 {stage2_text}
 
-Your task as Chairman is to synthesize all of this information into a single, comprehensive, accurate answer to the user's original question. Consider:
-- The individual responses and their insights
-- The peer rankings and what they reveal about response quality
-- Any patterns of agreement or disagreement
+Deine Aufgabe als Vorsitzender ist es, all diese Informationen zu einer einzigen, umfassenden und präzisen Antwort auf die ursprüngliche Frage des Nutzers zusammenzufassen. Berücksichtige dabei:
+- Die individuellen Antworten und ihre Erkenntnisse
+- Die Bewertungen der Peers und was sie über die Qualität der Antworten aussagen
+- Jegliche Muster von Übereinstimmung oder Unstimmigkeit
 
-Provide a clear, well-reasoned final answer that represents the council's collective wisdom:"""
+Gib eine klare, gut begründete endgültige Antwort auf Deutsch, die die kollektive Weisheit des Rates repräsentiert:"""
 
     messages = [{"role": "user", "content": chairman_prompt}]
 
@@ -265,12 +268,12 @@ async def generate_conversation_title(user_query: str) -> str:
     Returns:
         A short title (3-5 words)
     """
-    title_prompt = f"""Generate a very short title (3-5 words maximum) that summarizes the following question.
-The title should be concise and descriptive. Do not use quotes or punctuation in the title.
+    title_prompt = f"""Generiere einen sehr kurzen Titel (maximal 3-5 Wörter), der die folgende Frage zusammenfasst.
+Der Titel sollte prägnant und beschreibend sein. Verwende keine Anführungszeichen oder Satzzeichen im Titel. Antworte auf Deutsch.
 
-Question: {user_query}
+Frage: {user_query}
 
-Title:"""
+Titel:"""
 
     messages = [{"role": "user", "content": title_prompt}]
 
