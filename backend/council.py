@@ -16,7 +16,7 @@ async def stage1_collect_responses(user_query: str) -> List[Dict[str, Any]]:
         List of dicts with 'model' and 'response' keys
     """
     messages = [
-        {"role": "system", "content": "Du bist ein hilfreicher Assistent. Bitte antworte auf die Fragen des Nutzers ausführlich, präzise und ausschließlich auf Deutsch."},
+        {"role": "system", "content": "Du bist ein hochintelligenter Assistent und Teil eines Expertenrates. Deine Aufgabe ist es, die Fragen des Nutzers so präzise, objektiv und umfassend wie möglich zu beantworten. Nutze dein gesamtes Wissen, denke Schritt für Schritt und begründe deine Aussagen. Antworte ausschließlich auf Deutsch."},
         {"role": "user", "content": user_query}
     ]
 
@@ -73,27 +73,32 @@ Hier sind die Antworten verschiedener Modelle (anonymisiert):
 {responses_text}
 
 Deine Aufgabe:
-1. Bewerte zuerst jede Antwort individuell. Erkläre für jede Antwort, was sie gut macht und was sie schlecht macht.
-2. Gib ganz am Ende deiner Antwort eine abschließende Rangliste an.
+1. Analysiere jede Antwort kritisch. Achte besonders auf:
+   - Korrektheit: Sind die Fakten richtig?
+   - Vollständigkeit: Wurden alle Aspekte der Frage beantwortet?
+   - Objektivität: Ist die Antwort neutral und ausgewogen?
+   - Verständlichkeit: Ist die Antwort klar strukturiert und gut lesbar?
+2. Identifiziere mögliche Fehler, Halluzinationen oder Ungenauigkeiten.
+3. Gib ganz am Ende deiner Antwort eine abschließende Rangliste an.
 
 WICHTIG: Deine abschließende Rangliste MUSS EXAKT wie folgt formatiert sein:
-- Beginne mit der Zeile "FINAL RANKING:" (alles in Großbuchstaben, mit Doppelpunkt)
+- Beginne mit der Zeile "ABSCHLIESSENDES RANKING:" (alles in Großbuchstaben, mit Doppelpunkt)
 - Liste dann die Antworten von der besten zur schlechtesten als nummerierte Liste auf
 - Jede Zeile sollte so aussehen: Nummer, Punkt, Leerzeichen, dann NUR das Antwort-Label (z.B. "1. Response A")
 - Füge keine weiteren Texte oder Erklärungen im Ranking-Abschnitt hinzu
 
 Beispiel für das korrekte Format deiner GESAMTEN Antwort:
 
-Response A liefert gute Details zu X, verfehlt aber Y...
-Response B ist genau, aber es fehlt Tiefe bei Z...
-Response C bietet die umfassendste Antwort...
+Response A ist sehr detailliert, enthält aber einen sachlichen Fehler bei...
+Response B ist prägnant und korrekt, lässt aber...
+Response C bietet die beste Balance aus Tiefe und...
 
-FINAL RANKING:
+ABSCHLIESSENDES RANKING:
 1. Response C
-2. Response A
-3. Response B
+2. Response B
+3. Response A
 
-Bitte gib nun deine Bewertung und das Ranking ab:"""
+Bitte gib nun deine detaillierte Analyse und das Ranking ab:"""
 
     messages = [{"role": "user", "content": ranking_prompt}]
 
@@ -152,12 +157,19 @@ STAGE 1 - Individuelle Antworten:
 STAGE 2 - Bewertungen der Peers:
 {stage2_text}
 
-Deine Aufgabe als Vorsitzender ist es, all diese Informationen zu einer einzigen, umfassenden und präzisen Antwort auf die ursprüngliche Frage des Nutzers zusammenzufassen. Berücksichtige dabei:
-- Die individuellen Antworten und ihre Erkenntnisse
-- Die Bewertungen der Peers und was sie über die Qualität der Antworten aussagen
-- Jegliche Muster von Übereinstimmung oder Unstimmigkeit
+Deine Aufgabe als Vorsitzender ist es, all diese Informationen zu einer einzigen, bestmöglichen Antwort zu synthetisieren.
 
-Gib eine klare, gut begründete endgültige Antwort auf Deutsch, die die kollektive Weisheit des Rates repräsentiert:"""
+Vorgehensweise:
+1. Analysiere die Qualität der Antworten basierend auf den Peer-Reviews (Stage 2). Gewichte höher bewertete Antworten stärker.
+2. Identifiziere Widersprüche zwischen den Modellen. Wenn Modelle sich widersprechen, nutze deine eigene Urteilskraft, um die korrekte Information zu bestimmen, und weise transparent auf die Unsicherheit hin.
+3. Erstelle eine strukturierte, umfassende Antwort.
+
+Struktur der Antwort:
+- **Zusammenfassung**: Eine direkte Antwort auf die Frage.
+- **Details**: Ausführliche Erklärungen, die die besten Erkenntnisse aller Modelle kombinieren.
+- **Dissent/Nuancen** (optional): Falls es interessante Meinungsverschiedenheiten im Rat gab, erwähne diese kurz.
+
+Gib eine klare, professionelle und gut begründete endgültige Antwort auf Deutsch:"""
 
     messages = [{"role": "user", "content": chairman_prompt}]
 
@@ -179,7 +191,8 @@ Gib eine klare, gut begründete endgültige Antwort auf Deutsch, die die kollekt
 
 def parse_ranking_from_text(ranking_text: str) -> List[str]:
     """
-    Parse the FINAL RANKING section from the model's response.
+    Parse the ranking section from the model's response.
+    Supports "ABSCHLIESSENDES RANKING:" (German) and "FINAL RANKING:" (English/Legacy).
 
     Args:
         ranking_text: The full text response from the model
@@ -189,24 +202,33 @@ def parse_ranking_from_text(ranking_text: str) -> List[str]:
     """
     import re
 
-    # Look for "FINAL RANKING:" section
-    if "FINAL RANKING:" in ranking_text:
-        # Extract everything after "FINAL RANKING:"
-        parts = ranking_text.split("FINAL RANKING:")
-        if len(parts) >= 2:
-            ranking_section = parts[1]
-            # Try to extract numbered list format (e.g., "1. Response A")
-            # This pattern looks for: number, period, optional space, "Response X"
-            numbered_matches = re.findall(r'\d+\.\s*Response [A-Z]', ranking_section)
-            if numbered_matches:
-                # Extract just the "Response X" part
-                return [re.search(r'Response [A-Z]', m).group() for m in numbered_matches]
+    # Define possible delimiters for the ranking section
+    delimiters = ["ABSCHLIESSENDES RANKING:", "FINAL RANKING:"]
 
-            # Fallback: Extract all "Response X" patterns in order
-            matches = re.findall(r'Response [A-Z]', ranking_section)
+    ranking_section = None
+    for delimiter in delimiters:
+        if delimiter in ranking_text:
+            parts = ranking_text.split(delimiter)
+            if len(parts) >= 2:
+                # Take the last part in case the delimiter appears multiple times (unlikely but safer)
+                ranking_section = parts[-1]
+                break
+
+    if ranking_section:
+        # Try to extract numbered list format (e.g., "1. Response A")
+        # This pattern looks for: number, period, optional space, "Response X"
+        numbered_matches = re.findall(r'\d+\.\s*Response [A-Z]', ranking_section)
+        if numbered_matches:
+            # Extract just the "Response X" part
+            return [re.search(r'Response [A-Z]', m).group() for m in numbered_matches]
+
+        # Fallback: Extract all "Response X" patterns in order from the section
+        matches = re.findall(r'Response [A-Z]', ranking_section)
+        if matches:
             return matches
 
-    # Fallback: try to find any "Response X" patterns in order
+    # Fallback if no delimiter found or no matches in section:
+    # try to find any "Response X" patterns in order from the full text
     matches = re.findall(r'Response [A-Z]', ranking_text)
     return matches
 
