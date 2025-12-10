@@ -15,7 +15,10 @@ async def stage1_collect_responses(user_query: str) -> List[Dict[str, Any]]:
     Returns:
         List of dicts with 'model' and 'response' keys
     """
-    messages = [{"role": "user", "content": user_query}]
+    messages = [
+        {"role": "system", "content": "Du bist ein hochintelligenter Assistent und Teil eines Expertenrates. Deine Aufgabe ist es, die Fragen des Nutzers so präzise, objektiv und umfassend wie möglich zu beantworten. Nutze dein gesamtes Wissen, denke Schritt für Schritt und begründe deine Aussagen. Antworte ausschließlich auf Deutsch."},
+        {"role": "user", "content": user_query}
+    ]
 
     # Query all models in parallel
     responses = await query_models_parallel(COUNCIL_MODELS, messages)
@@ -61,36 +64,41 @@ async def stage2_collect_rankings(
         for label, result in zip(labels, stage1_results)
     ])
 
-    ranking_prompt = f"""You are evaluating different responses to the following question:
+    ranking_prompt = f"""Du bewertest verschiedene Antworten auf die folgende Frage:
 
-Question: {user_query}
+Frage: {user_query}
 
-Here are the responses from different models (anonymized):
+Hier sind die Antworten verschiedener Modelle (anonymisiert):
 
 {responses_text}
 
-Your task:
-1. First, evaluate each response individually. For each response, explain what it does well and what it does poorly.
-2. Then, at the very end of your response, provide a final ranking.
+Deine Aufgabe:
+1. Analysiere jede Antwort kritisch. Achte besonders auf:
+   - Korrektheit: Sind die Fakten richtig?
+   - Vollständigkeit: Wurden alle Aspekte der Frage beantwortet?
+   - Objektivität: Ist die Antwort neutral und ausgewogen?
+   - Verständlichkeit: Ist die Antwort klar strukturiert und gut lesbar?
+2. Identifiziere mögliche Fehler, Halluzinationen oder Ungenauigkeiten.
+3. Gib ganz am Ende deiner Antwort eine abschließende Rangliste an.
 
-IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
-- Start with the line "FINAL RANKING:" (all caps, with colon)
-- Then list the responses from best to worst as a numbered list
-- Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
-- Do not add any other text or explanations in the ranking section
+WICHTIG: Deine abschließende Rangliste MUSS EXAKT wie folgt formatiert sein:
+- Beginne mit der Zeile "ABSCHLIESSENDES RANKING:" (alles in Großbuchstaben, mit Doppelpunkt)
+- Liste dann die Antworten von der besten zur schlechtesten als nummerierte Liste auf
+- Jede Zeile sollte so aussehen: Nummer, Punkt, Leerzeichen, dann NUR das Antwort-Label (z.B. "1. Response A")
+- Füge keine weiteren Texte oder Erklärungen im Ranking-Abschnitt hinzu
 
-Example of the correct format for your ENTIRE response:
+Beispiel für das korrekte Format deiner GESAMTEN Antwort:
 
-Response A provides good detail on X but misses Y...
-Response B is accurate but lacks depth on Z...
-Response C offers the most comprehensive answer...
+Response A ist sehr detailliert, enthält aber einen sachlichen Fehler bei...
+Response B ist prägnant und korrekt, lässt aber...
+Response C bietet die beste Balance aus Tiefe und...
 
-FINAL RANKING:
+ABSCHLIESSENDES RANKING:
 1. Response C
-2. Response A
-3. Response B
+2. Response B
+3. Response A
 
-Now provide your evaluation and ranking:"""
+Bitte gib nun deine detaillierte Analyse und das Ranking ab:"""
 
     messages = [{"role": "user", "content": ranking_prompt}]
 
@@ -139,22 +147,29 @@ async def stage3_synthesize_final(
         for result in stage2_results
     ])
 
-    chairman_prompt = f"""You are the Chairman of an LLM Council. Multiple AI models have provided responses to a user's question, and then ranked each other's responses.
+    chairman_prompt = f"""Du bist der Vorsitzende eines Rates von KI-Modellen (LLM Council). Mehrere KI-Modelle haben Antworten auf die Frage eines Nutzers geliefert und sich gegenseitig bewertet.
 
-Original Question: {user_query}
+Ursprüngliche Frage: {user_query}
 
-STAGE 1 - Individual Responses:
+STAGE 1 - Individuelle Antworten:
 {stage1_text}
 
-STAGE 2 - Peer Rankings:
+STAGE 2 - Bewertungen der Peers:
 {stage2_text}
 
-Your task as Chairman is to synthesize all of this information into a single, comprehensive, accurate answer to the user's original question. Consider:
-- The individual responses and their insights
-- The peer rankings and what they reveal about response quality
-- Any patterns of agreement or disagreement
+Deine Aufgabe als Vorsitzender ist es, all diese Informationen zu einer einzigen, bestmöglichen Antwort zu synthetisieren.
 
-Provide a clear, well-reasoned final answer that represents the council's collective wisdom:"""
+Vorgehensweise:
+1. Analysiere die Qualität der Antworten basierend auf den Peer-Reviews (Stage 2). Gewichte höher bewertete Antworten stärker.
+2. Identifiziere Widersprüche zwischen den Modellen. Wenn Modelle sich widersprechen, nutze deine eigene Urteilskraft, um die korrekte Information zu bestimmen, und weise transparent auf die Unsicherheit hin.
+3. Erstelle eine strukturierte, umfassende Antwort.
+
+Struktur der Antwort:
+- **Zusammenfassung**: Eine direkte Antwort auf die Frage.
+- **Details**: Ausführliche Erklärungen, die die besten Erkenntnisse aller Modelle kombinieren.
+- **Dissent/Nuancen** (optional): Falls es interessante Meinungsverschiedenheiten im Rat gab, erwähne diese kurz.
+
+Gib eine klare, professionelle und gut begründete endgültige Antwort auf Deutsch:"""
 
     messages = [{"role": "user", "content": chairman_prompt}]
 
@@ -176,7 +191,8 @@ Provide a clear, well-reasoned final answer that represents the council's collec
 
 def parse_ranking_from_text(ranking_text: str) -> List[str]:
     """
-    Parse the FINAL RANKING section from the model's response.
+    Parse the ranking section from the model's response.
+    Supports "ABSCHLIESSENDES RANKING:" (German) and "FINAL RANKING:" (English/Legacy).
 
     Args:
         ranking_text: The full text response from the model
@@ -186,24 +202,33 @@ def parse_ranking_from_text(ranking_text: str) -> List[str]:
     """
     import re
 
-    # Look for "FINAL RANKING:" section
-    if "FINAL RANKING:" in ranking_text:
-        # Extract everything after "FINAL RANKING:"
-        parts = ranking_text.split("FINAL RANKING:")
-        if len(parts) >= 2:
-            ranking_section = parts[1]
-            # Try to extract numbered list format (e.g., "1. Response A")
-            # This pattern looks for: number, period, optional space, "Response X"
-            numbered_matches = re.findall(r'\d+\.\s*Response [A-Z]', ranking_section)
-            if numbered_matches:
-                # Extract just the "Response X" part
-                return [re.search(r'Response [A-Z]', m).group() for m in numbered_matches]
+    # Define possible delimiters for the ranking section
+    delimiters = ["ABSCHLIESSENDES RANKING:", "FINAL RANKING:"]
 
-            # Fallback: Extract all "Response X" patterns in order
-            matches = re.findall(r'Response [A-Z]', ranking_section)
+    ranking_section = None
+    for delimiter in delimiters:
+        if delimiter in ranking_text:
+            parts = ranking_text.split(delimiter)
+            if len(parts) >= 2:
+                # Take the last part in case the delimiter appears multiple times (unlikely but safer)
+                ranking_section = parts[-1]
+                break
+
+    if ranking_section:
+        # Try to extract numbered list format (e.g., "1. Response A")
+        # This pattern looks for: number, period, optional space, "Response X"
+        numbered_matches = re.findall(r'\d+\.\s*Response [A-Z]', ranking_section)
+        if numbered_matches:
+            # Extract just the "Response X" part
+            return [re.search(r'Response [A-Z]', m).group() for m in numbered_matches]
+
+        # Fallback: Extract all "Response X" patterns in order from the section
+        matches = re.findall(r'Response [A-Z]', ranking_section)
+        if matches:
             return matches
 
-    # Fallback: try to find any "Response X" patterns in order
+    # Fallback if no delimiter found or no matches in section:
+    # try to find any "Response X" patterns in order from the full text
     matches = re.findall(r'Response [A-Z]', ranking_text)
     return matches
 
@@ -265,12 +290,12 @@ async def generate_conversation_title(user_query: str) -> str:
     Returns:
         A short title (3-5 words)
     """
-    title_prompt = f"""Generate a very short title (3-5 words maximum) that summarizes the following question.
-The title should be concise and descriptive. Do not use quotes or punctuation in the title.
+    title_prompt = f"""Generiere einen sehr kurzen Titel (maximal 3-5 Wörter), der die folgende Frage zusammenfasst.
+Der Titel sollte prägnant und beschreibend sein. Verwende keine Anführungszeichen oder Satzzeichen im Titel. Antworte auf Deutsch.
 
-Question: {user_query}
+Frage: {user_query}
 
-Title:"""
+Titel:"""
 
     messages = [{"role": "user", "content": title_prompt}]
 
