@@ -41,8 +41,8 @@ export default function ChatInterface({
     return (
       <div className="chat-interface">
         <div className="empty-state">
-          <h2>Welcome to LLM Council</h2>
-          <p>Create a new conversation to get started</p>
+          <h2>Willkommen beim LLM Council</h2>
+          <p>Erstellen Sie eine neue Unterhaltung, um zu beginnen</p>
         </div>
       </div>
     );
@@ -53,15 +53,15 @@ export default function ChatInterface({
       <div className="messages-container">
         {conversation.messages.length === 0 ? (
           <div className="empty-state">
-            <h2>Start a conversation</h2>
-            <p>Ask a question to consult the LLM Council</p>
+            <h2>Starten Sie eine Unterhaltung</h2>
+            <p>Stellen Sie eine Frage, um den LLM Council zu konsultieren</p>
           </div>
         ) : (
           conversation.messages.map((msg, index) => (
             <div key={index} className="message-group">
               {msg.role === 'user' ? (
                 <div className="user-message">
-                  <div className="message-label">You</div>
+                  <div className="message-label">Du</div>
                   <div className="message-content">
                     <div className="markdown-content">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
@@ -76,7 +76,7 @@ export default function ChatInterface({
                   {msg.loading?.stage1 && (
                     <div className="stage-loading">
                       <div className="spinner"></div>
-                      <span>Running Stage 1: Collecting individual responses...</span>
+                      <span>Phase 1 läuft: Individuelle Antworten werden gesammelt...</span>
                     </div>
                   )}
                   {msg.stage1 && <Stage1 responses={msg.stage1} />}
@@ -85,7 +85,7 @@ export default function ChatInterface({
                   {msg.loading?.stage2 && (
                     <div className="stage-loading">
                       <div className="spinner"></div>
-                      <span>Running Stage 2: Peer rankings...</span>
+                      <span>Phase 2 läuft: Peer-Rankings...</span>
                     </div>
                   )}
                   {msg.stage2 && (
@@ -100,7 +100,7 @@ export default function ChatInterface({
                   {msg.loading?.stage3 && (
                     <div className="stage-loading">
                       <div className="spinner"></div>
-                      <span>Running Stage 3: Final synthesis...</span>
+                      <span>Phase 3 läuft: Finale Zusammenfassung...</span>
                     </div>
                   )}
                   {msg.stage3 && <Stage3 finalResponse={msg.stage3} />}
@@ -113,7 +113,7 @@ export default function ChatInterface({
         {isLoading && (
           <div className="loading-indicator">
             <div className="spinner"></div>
-            <span>Consulting the council...</span>
+            <span>Der Rat wird konsultiert...</span>
           </div>
         )}
 
@@ -124,7 +124,7 @@ export default function ChatInterface({
         <form className="input-form" onSubmit={handleSubmit}>
           <textarea
             className="message-input"
-            placeholder="Ask your question... (Shift+Enter for new line, Enter to send)"
+            placeholder="Stellen Sie Ihre Frage... (Shift+Enter für neue Zeile, Enter zum Senden)"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -136,7 +136,7 @@ export default function ChatInterface({
             className="send-button"
             disabled={!input.trim() || isLoading}
           >
-            Send
+            Senden
           </button>
         </form>
       )}

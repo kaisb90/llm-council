@@ -61,36 +61,36 @@ async def stage2_collect_rankings(
         for label, result in zip(labels, stage1_results)
     ])
 
-    ranking_prompt = f"""You are evaluating different responses to the following question:
+    ranking_prompt = f"""Du bewertest verschiedene Antworten auf die folgende Frage:
 
-Question: {user_query}
+Frage: {user_query}
 
-Here are the responses from different models (anonymized):
+Hier sind die Antworten von verschiedenen Modellen (anonymisiert):
 
 {responses_text}
 
-Your task:
-1. First, evaluate each response individually. For each response, explain what it does well and what it does poorly.
-2. Then, at the very end of your response, provide a final ranking.
+Deine Aufgabe:
+1. Bewerte zunächst jede Antwort einzeln. Erkläre für jede Antwort, was sie gut und was sie schlecht macht. Bitte antworte auf Deutsch.
+2. Gib dann ganz am Ende deiner Antwort ein finales Ranking ab.
 
-IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
-- Start with the line "FINAL RANKING:" (all caps, with colon)
-- Then list the responses from best to worst as a numbered list
-- Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
-- Do not add any other text or explanations in the ranking section
+WICHTIG: Dein finales Ranking MUSS EXAKT wie folgt formatiert sein (behalte die englischen Schlüsselwörter für das Ranking-Format bei, um die Verarbeitung sicherzustellen):
+- Beginne mit der Zeile "FINAL RANKING:" (Großbuchstaben, mit Doppelpunkt)
+- Liste dann die Antworten von der besten zur schlechtesten als nummerierte Liste auf
+- Jede Zeile sollte so aussehen: Nummer, Punkt, Leerzeichen, dann NUR das Antwort-Label (z.B. "1. Response A")
+- Füge keine weiteren Texte oder Erklärungen im Ranking-Abschnitt hinzu
 
-Example of the correct format for your ENTIRE response:
+Beispiel für das korrekte Format deiner GESAMTEN Antwort:
 
-Response A provides good detail on X but misses Y...
-Response B is accurate but lacks depth on Z...
-Response C offers the most comprehensive answer...
+Response A liefert gute Details zu X, verpasst aber Y...
+Response B ist genau, aber es fehlt Tiefe bei Z...
+Response C bietet die umfassendste Antwort...
 
 FINAL RANKING:
 1. Response C
 2. Response A
 3. Response B
 
-Now provide your evaluation and ranking:"""
+Gib nun deine Bewertung und das Ranking ab (bitte auf Deutsch bewerten, aber das Ranking-Format strikt einhalten):"""
 
     messages = [{"role": "user", "content": ranking_prompt}]
 
@@ -139,22 +139,22 @@ async def stage3_synthesize_final(
         for result in stage2_results
     ])
 
-    chairman_prompt = f"""You are the Chairman of an LLM Council. Multiple AI models have provided responses to a user's question, and then ranked each other's responses.
+    chairman_prompt = f"""Du bist der Vorsitzende eines LLM-Rates (LLM Council). Mehrere KI-Modelle haben Antworten auf eine Benutzerfrage gegeben und anschließend gegenseitig ihre Antworten bewertet.
 
-Original Question: {user_query}
+Originalfrage: {user_query}
 
-STAGE 1 - Individual Responses:
+PHASE 1 - Individuelle Antworten:
 {stage1_text}
 
-STAGE 2 - Peer Rankings:
+PHASE 2 - Peer-Rankings:
 {stage2_text}
 
-Your task as Chairman is to synthesize all of this information into a single, comprehensive, accurate answer to the user's original question. Consider:
-- The individual responses and their insights
-- The peer rankings and what they reveal about response quality
-- Any patterns of agreement or disagreement
+Deine Aufgabe als Vorsitzender ist es, all diese Informationen zu einer einzigen, umfassenden und genauen Antwort auf die ursprüngliche Frage des Benutzers zusammenzufassen. Berücksichtige dabei:
+- Die individuellen Antworten und ihre Erkenntnisse
+- Die Peer-Rankings und was sie über die Qualität der Antworten aussagen
+- Muster von Übereinstimmungen oder Meinungsverschiedenheiten
 
-Provide a clear, well-reasoned final answer that represents the council's collective wisdom:"""
+Bitte gib eine klare, gut begründete finale Antwort auf Deutsch, die die kollektive Weisheit des Rates repräsentiert:"""
 
     messages = [{"role": "user", "content": chairman_prompt}]
 
@@ -165,7 +165,7 @@ Provide a clear, well-reasoned final answer that represents the council's collec
         # Fallback if chairman fails
         return {
             "model": CHAIRMAN_MODEL,
-            "response": "Error: Unable to generate final synthesis."
+            "response": "Fehler: Finale Zusammenfassung konnte nicht generiert werden."
         }
 
     return {
@@ -265,12 +265,12 @@ async def generate_conversation_title(user_query: str) -> str:
     Returns:
         A short title (3-5 words)
     """
-    title_prompt = f"""Generate a very short title (3-5 words maximum) that summarizes the following question.
-The title should be concise and descriptive. Do not use quotes or punctuation in the title.
+    title_prompt = f"""Generiere einen sehr kurzen Titel (maximal 3-5 Wörter) auf Deutsch, der die folgende Frage zusammenfasst.
+Der Titel sollte prägnant und beschreibend sein. Verwende keine Anführungszeichen oder Satzzeichen im Titel.
 
-Question: {user_query}
+Frage: {user_query}
 
-Title:"""
+Titel:"""
 
     messages = [{"role": "user", "content": title_prompt}]
 
@@ -310,7 +310,7 @@ async def run_full_council(user_query: str) -> Tuple[List, List, Dict, Dict]:
     if not stage1_results:
         return [], [], {
             "model": "error",
-            "response": "All models failed to respond. Please try again."
+            "response": "Alle Modelle haben nicht geantwortet. Bitte versuche es erneut."
         }, {}
 
     # Stage 2: Collect rankings
