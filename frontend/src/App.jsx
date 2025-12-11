@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatInterface from './components/ChatInterface';
-import { api } from './api';
+import * as api from './api';
 import './App.css';
 
 function App() {
@@ -24,7 +24,7 @@ function App() {
 
   const loadConversations = async () => {
     try {
-      const convs = await api.listConversations();
+      const convs = await api.getConversations();
       setConversations(convs);
     } catch (error) {
       console.error('Failed to load conversations:', error);
@@ -90,86 +90,108 @@ function App() {
       }));
 
       // Send message with streaming
-      await api.sendMessageStream(currentConversationId, content, (eventType, event) => {
-        switch (eventType) {
-          case 'stage1_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.loading.stage1 = true;
-              return { ...prev, messages };
-            });
-            break;
+      const eventSource = api.sendMessageStream(currentConversationId, content);
 
-          case 'stage1_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.stage1 = event.data;
-              lastMsg.loading.stage1 = false;
-              return { ...prev, messages };
-            });
-            break;
+      eventSource.onmessage = (event) => {
+          // The data is actually inside event.data, but since we are sending JSON data as strings in the stream:
+          // yield f"data: {json.dumps({'type': 'stage1_start'})}\n\n"
+          // The event.data will be the JSON string.
 
-          case 'stage2_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.loading.stage2 = true;
-              return { ...prev, messages };
-            });
-            break;
+          try {
+            const data = JSON.parse(event.data);
+            const eventType = data.type;
 
-          case 'stage2_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.stage2 = event.data;
-              lastMsg.metadata = event.metadata;
-              lastMsg.loading.stage2 = false;
-              return { ...prev, messages };
-            });
-            break;
+            switch (eventType) {
+                case 'stage1_start':
+                    setCurrentConversation((prev) => {
+                    const messages = [...prev.messages];
+                    const lastMsg = messages[messages.length - 1];
+                    lastMsg.loading.stage1 = true;
+                    return { ...prev, messages };
+                    });
+                    break;
 
-          case 'stage3_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.loading.stage3 = true;
-              return { ...prev, messages };
-            });
-            break;
+                case 'stage1_complete':
+                    setCurrentConversation((prev) => {
+                    const messages = [...prev.messages];
+                    const lastMsg = messages[messages.length - 1];
+                    lastMsg.stage1 = data.data;
+                    lastMsg.loading.stage1 = false;
+                    return { ...prev, messages };
+                    });
+                    break;
 
-          case 'stage3_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.stage3 = event.data;
-              lastMsg.loading.stage3 = false;
-              return { ...prev, messages };
-            });
-            break;
+                case 'stage2_start':
+                    setCurrentConversation((prev) => {
+                    const messages = [...prev.messages];
+                    const lastMsg = messages[messages.length - 1];
+                    lastMsg.loading.stage2 = true;
+                    return { ...prev, messages };
+                    });
+                    break;
 
-          case 'title_complete':
-            // Reload conversations to get updated title
-            loadConversations();
-            break;
+                case 'stage2_complete':
+                    setCurrentConversation((prev) => {
+                    const messages = [...prev.messages];
+                    const lastMsg = messages[messages.length - 1];
+                    lastMsg.stage2 = data.data;
+                    lastMsg.metadata = data.metadata;
+                    lastMsg.loading.stage2 = false;
+                    return { ...prev, messages };
+                    });
+                    break;
 
-          case 'complete':
-            // Stream complete, reload conversations list
-            loadConversations();
-            setIsLoading(false);
-            break;
+                case 'stage3_start':
+                    setCurrentConversation((prev) => {
+                    const messages = [...prev.messages];
+                    const lastMsg = messages[messages.length - 1];
+                    lastMsg.loading.stage3 = true;
+                    return { ...prev, messages };
+                    });
+                    break;
 
-          case 'error':
-            console.error('Stream error:', event.message);
-            setIsLoading(false);
-            break;
+                case 'stage3_complete':
+                    setCurrentConversation((prev) => {
+                    const messages = [...prev.messages];
+                    const lastMsg = messages[messages.length - 1];
+                    lastMsg.stage3 = data.data;
+                    lastMsg.loading.stage3 = false;
+                    return { ...prev, messages };
+                    });
+                    break;
 
-          default:
-            console.log('Unknown event type:', eventType);
-        }
-      });
+                case 'title_complete':
+                    // Reload conversations to get updated title
+                    loadConversations();
+                    break;
+
+                case 'complete':
+                    // Stream complete, reload conversations list
+                    loadConversations();
+                    setIsLoading(false);
+                    eventSource.close();
+                    break;
+
+                case 'error':
+                    console.error('Stream error:', data.message);
+                    setIsLoading(false);
+                    eventSource.close();
+                    break;
+
+                default:
+                    console.log('Unknown event type:', eventType);
+            }
+          } catch (e) {
+              console.error("Error parsing event data", e);
+          }
+      };
+
+      eventSource.onerror = (err) => {
+          console.error("EventSource failed:", err);
+          eventSource.close();
+          setIsLoading(false);
+      }
+
     } catch (error) {
       console.error('Failed to send message:', error);
       // Remove optimistic messages on error
