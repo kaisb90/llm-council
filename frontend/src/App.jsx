@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatInterface from './components/ChatInterface';
 import { api } from './api';
+import Stage25 from './components/Stage25';
 import './App.css';
 
 function App() {
@@ -74,11 +75,13 @@ function App() {
         role: 'assistant',
         stage1: null,
         stage2: null,
+        stage25: null,
         stage3: null,
         metadata: null,
         loading: {
           stage1: false,
           stage2: false,
+          stage25: false,
           stage3: false,
         },
       };
@@ -127,6 +130,25 @@ function App() {
               lastMsg.stage2 = event.data;
               lastMsg.metadata = event.metadata;
               lastMsg.loading.stage2 = false;
+              return { ...prev, messages };
+            });
+            break;
+
+          case 'stage25_start':
+            setCurrentConversation((prev) => {
+              const messages = [...prev.messages];
+              const lastMsg = messages[messages.length - 1];
+              lastMsg.loading.stage25 = true;
+              return { ...prev, messages };
+            });
+            break;
+
+          case 'stage25_complete':
+            setCurrentConversation((prev) => {
+              const messages = [...prev.messages];
+              const lastMsg = messages[messages.length - 1];
+              lastMsg.stage25 = event.data;
+              lastMsg.loading.stage25 = false;
               return { ...prev, messages };
             });
             break;

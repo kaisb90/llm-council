@@ -1,0 +1,61 @@
+.stage25 {
+  border-left: 4px solid #9c27b0;
+  background-color: #f3e5f5;
+}
+
+.badge-passthrough {
+  font-size: 0.8em;
+  background: #e0e0e0;
+  padding: 2px 4px;
+  border-radius: 4px;
+  margin-left: 6px;
+  color: #333;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  margin-left: 10px;
+}
+
+.status-badge.success {
+  background-color: #c8e6c9;
+  color: #2e7d32;
+}
+
+.status-badge.warning {
+  background-color: #fff9c4;
+  color: #fbc02d;
+}
+
+.fix-log {
+  background: white;
+  padding: 10px;
+  border-radius: 6px;
+  margin-bottom: 15px;
+  border: 1px solid #e1bee7;
+}
+
+.fix-log h4 {
+  margin-top: 0;
+  color: #7b1fa2;
+}
+
+.fix-log ul {
+  padding-left: 20px;
+  margin-bottom: 0;
+}
+
+.risks {
+  margin-top: 15px;
+  background: #fff3e0;
+  padding: 10px;
+  border-radius: 6px;
+  color: #e65100;
+}
+
+.risks h4 {
+  margin-top: 0;
+}
