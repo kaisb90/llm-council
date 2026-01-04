@@ -131,7 +131,10 @@ def add_assistant_message(
     conversation_id: str,
     stage1: List[Dict[str, Any]],
     stage2: List[Dict[str, Any]],
-    stage3: Dict[str, Any]
+    stage3: Dict[str, Any],
+    metadata: Optional[Dict[str, Any]] = None,
+    stage25: Optional[List[Dict[str, Any]]] = None,
+    stage25_timestamp: Optional[str] = None
 ):
     """
     Add an assistant message with all 3 stages to a conversation.
@@ -141,17 +144,30 @@ def add_assistant_message(
         stage1: List of individual model responses
         stage2: List of model rankings
         stage3: Final synthesized response
+        metadata: Optional metadata (e.g. label_to_model, aggregate_rankings)
+        stage25: Optional Stage 2.5 repair results
+        stage25_timestamp: Optional timestamp for Stage 2.5
     """
     conversation = get_conversation(conversation_id)
     if conversation is None:
         raise ValueError(f"Conversation {conversation_id} not found")
 
-    conversation["messages"].append({
+    message = {
         "role": "assistant",
         "stage1": stage1,
         "stage2": stage2,
         "stage3": stage3
-    })
+    }
+
+    if metadata:
+        message["metadata"] = metadata
+
+    if stage25:
+        message["stage25"] = stage25
+        if stage25_timestamp:
+            message["stage25_timestamp"] = stage25_timestamp
+
+    conversation["messages"].append(message)
 
     save_conversation(conversation)
 
