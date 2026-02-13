@@ -1,6 +1,9 @@
 """3-stage LLM Council orchestration."""
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
+import json
+import re
+import asyncio
 from .openrouter import query_models_parallel, query_model
 from .config import COUNCIL_MODELS, CHAIRMAN_MODEL
 
@@ -32,19 +35,48 @@ async def stage1_collect_responses(user_query: str) -> List[Dict[str, Any]]:
     return stage1_results
 
 
-async def stage2_collect_rankings(
+def parse_json_review(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Robustly parse JSON review from text.
+
+    Args:
+        text: The raw text response from the model
+
+    Returns:
+        Parsed JSON dict or None if parsing failed
+    """
+    # 1. Try direct parsing
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Try to find the first outer-most JSON object
+    try:
+        # Match starting from first { to last }
+        match = re.search(r'(\{.*\})', text, re.DOTALL)
+        if match:
+            json_str = match.group(1)
+            return json.loads(json_str)
+    except json.JSONDecodeError:
+        pass
+
+    return None
+
+
+async def stage2_collect_reviews(
     user_query: str,
     stage1_results: List[Dict[str, Any]]
 ) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
     """
-    Stage 2: Each model ranks the anonymized responses.
+    Stage 2: Each model provides detailed reviews and rankings in JSON format.
 
     Args:
         user_query: The original user query
         stage1_results: Results from Stage 1
 
     Returns:
-        Tuple of (rankings list, label_to_model mapping)
+        Tuple of (results list, label_to_model mapping)
     """
     # Create anonymized labels for responses (Response A, Response B, etc.)
     labels = [chr(65 + i) for i in range(len(stage1_results))]  # A, B, C, ...
@@ -55,13 +87,13 @@ async def stage2_collect_rankings(
         for label, result in zip(labels, stage1_results)
     }
 
-    # Build the ranking prompt
+    # Build the review prompt
     responses_text = "\n\n".join([
         f"Response {label}:\n{result['response']}"
         for label, result in zip(labels, stage1_results)
     ])
 
-    ranking_prompt = f"""You are evaluating different responses to the following question:
+    review_prompt = f"""You are a strict code reviewer and expert evaluator.
 
 Question: {user_query}
 
@@ -70,31 +102,50 @@ Here are the responses from different models (anonymized):
 {responses_text}
 
 Your task:
-1. First, evaluate each response individually. For each response, explain what it does well and what it does poorly.
-2. Then, at the very end of your response, provide a final ranking.
+1. Analyze each response for correctness, completeness, and safety.
+2. Identify specific bugs or issues.
+3. Provide a final ranking.
 
-IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
-- Start with the line "FINAL RANKING:" (all caps, with colon)
-- Then list the responses from best to worst as a numbered list
-- Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
-- Do not add any other text or explanations in the ranking section
+CRITICAL: You MUST Output ONLY valid JSON using this EXACT schema:
 
-Example of the correct format for your ENTIRE response:
+{{
+  "schema_version": 1,
+  "reviews": {{
+    "Response A": {{
+      "bugs": [
+        {{
+          "title": "Short title of the issue",
+          "evidence": {{
+            "substring": "Exact substring from response text (must match exactly!)",
+            "start": 0,
+            "end": 0
+          }},
+          "fix": {{
+            "summary": "How to fix it",
+            "patch_unified_diff": "Optional unified diff string"
+          }},
+          "severity": 1,
+          "confidence": 0.0
+        }}
+      ],
+      "tests": ["Suggested test case description"],
+      "notes": "General evaluation notes (in German)"
+    }}
+  }},
+  "final_ranking": ["Response A", "Response C", "Response B"]
+}}
 
-Response A provides good detail on X but misses Y...
-Response B is accurate but lacks depth on Z...
-Response C offers the most comprehensive answer...
+Rules:
+- severity: 1 (minor) to 5 (critical)
+- confidence: 0.0 to 1.0
+- If no bugs are found, "bugs" should be an empty list.
+- Do NOT include any text outside the JSON block.
+- Ensure the JSON is valid.
+"""
 
-FINAL RANKING:
-1. Response C
-2. Response A
-3. Response B
+    messages = [{"role": "user", "content": review_prompt}]
 
-Now provide your evaluation and ranking:"""
-
-    messages = [{"role": "user", "content": ranking_prompt}]
-
-    # Get rankings from all council models in parallel
+    # Get reviews from all council models in parallel
     responses = await query_models_parallel(COUNCIL_MODELS, messages)
 
     # Format results
@@ -102,20 +153,182 @@ Now provide your evaluation and ranking:"""
     for model, response in responses.items():
         if response is not None:
             full_text = response.get('content', '')
-            parsed = parse_ranking_from_text(full_text)
-            stage2_results.append({
+            review_json = parse_json_review(full_text)
+
+            # Create result entry
+            result = {
                 "model": model,
-                "ranking": full_text,
-                "parsed_ranking": parsed
-            })
+                "ranking": full_text, # Keep raw text for debugging/fallback
+                "review_json": review_json,
+                "parsed_ranking": []
+            }
+
+            # Extract ranking if JSON parsing succeeded
+            if review_json and "final_ranking" in review_json:
+                result["parsed_ranking"] = review_json["final_ranking"]
+
+            stage2_results.append(result)
 
     return stage2_results, label_to_model
+
+
+async def stage25_repair(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage2_results: List[Dict[str, Any]],
+    label_to_model: Dict[str, str]
+) -> List[Dict[str, Any]]:
+    """
+    Stage 2.5: Models repair their own responses based on aggregated findings.
+
+    Args:
+        user_query: Original user query
+        stage1_results: Stage 1 responses
+        stage2_results: Stage 2 reviews (containing bugs/findings)
+        label_to_model: Mapping from Response Label to Model Name
+
+    Returns:
+        List of repair results (revised answers)
+    """
+    # 1. Aggregate findings per model (Response Label)
+    # Map: Label -> List of Bugs (across all reviewers)
+    findings_per_label = {label: [] for label in label_to_model.keys()}
+
+    for reviewer_result in stage2_results:
+        review_json = reviewer_result.get("review_json")
+        if not review_json or "reviews" not in review_json:
+            continue
+
+        reviews = review_json["reviews"]
+        for target_label, review_data in reviews.items():
+            if target_label in findings_per_label and "bugs" in review_data:
+                # Add bugs to the list
+                findings_per_label[target_label].extend(review_data["bugs"])
+
+    # 2. Prepare tasks for each model
+    repair_tasks = {} # model_name -> messages
+    original_responses = {
+        result['model']: result['response']
+        for result in stage1_results
+    }
+
+    results = [] # To store final results
+
+    for label, model_name in label_to_model.items():
+        if model_name not in original_responses:
+            continue
+
+        original_response = original_responses[model_name]
+        bugs = findings_per_label[label]
+
+        # Filter significant bugs (Severity >= 3)
+        significant_bugs = [b for b in bugs if b.get('severity', 0) >= 3]
+
+        # 3. No-Op Check
+        if not significant_bugs:
+            # Pass-through
+            results.append({
+                "model": model_name,
+                "revised_answer": original_response,
+                "fix_log": [],
+                "remaining_risks": [],
+                "passthrough": True
+            })
+            continue
+
+        # 4. Construct Repair Prompt
+        bugs_text = json.dumps(significant_bugs, indent=2)
+
+        repair_prompt = f"""You previously provided a response to: "{user_query}"
+
+Peer reviewers identified the following significant issues (bugs) in your response:
+{bugs_text}
+
+Your task:
+1. Review these findings.
+2. Fix the issues in your response.
+3. Provide a revised, corrected response.
+
+CRITICAL: Output ONLY valid JSON using this schema:
+{{
+  "revised_answer": "The full corrected response text (Markdown allowed)",
+  "fix_log": [
+    {{"issue": "Brief description of issue fixed", "change": "What you changed"}}
+  ],
+  "remaining_risks": ["Any known limitations remaining"],
+  "passthrough": false
+}}
+"""
+        repair_tasks[model_name] = [{"role": "user", "content": repair_prompt}]
+
+    # 5. Execute repairs in parallel
+    if repair_tasks:
+        # We need to query specific models. query_models_parallel queries ALL council models with the SAME message.
+        # Here we have different messages for different models.
+        # We can use query_model for each task and gather them.
+
+        # Create coroutines for each repair task
+        tasks = []
+        model_names = []
+        for model_name, messages in repair_tasks.items():
+            tasks.append(query_model(model_name, messages))
+            model_names.append(model_name)
+
+        # Run all repair tasks concurrently
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process results
+        for model_name, response in zip(model_names, responses):
+            if isinstance(response, Exception) or response is None:
+                # Fallback to original if repair fails
+                results.append({
+                    "model": model_name,
+                    "revised_answer": original_responses[model_name],
+                    "fix_log": [{"issue": "Repair failed", "change": "Reverted to original"}],
+                    "remaining_risks": ["Repair process failed"],
+                    "passthrough": True # Technically failed repair implies passthrough of original
+                })
+            else:
+                # Parse JSON response
+                content = response.get('content', '')
+                parsed = parse_json_review(content) # Reuse robust parser
+
+                if parsed and "revised_answer" in parsed:
+                    results.append({
+                        "model": model_name,
+                        "revised_answer": parsed.get("revised_answer", ""),
+                        "fix_log": parsed.get("fix_log", []),
+                        "remaining_risks": parsed.get("remaining_risks", []),
+                        "passthrough": False
+                    })
+                else:
+                    # Parsing failed
+                    results.append({
+                        "model": model_name,
+                        "revised_answer": original_responses[model_name],
+                        "fix_log": [{"issue": "Repair JSON parse failed", "change": "Reverted to original"}],
+                        "remaining_risks": ["Repair parsing failed"],
+                        "passthrough": True
+                    })
+
+    return results
+
+
+async def stage2_collect_rankings(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]]
+) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+    """
+    Legacy Stage 2: Text-based ranking (kept for reference, usually bypassed by stage2_collect_reviews).
+    """
+    return await stage2_collect_reviews(user_query, stage1_results)
 
 
 async def stage3_synthesize_final(
     user_query: str,
     stage1_results: List[Dict[str, Any]],
-    stage2_results: List[Dict[str, Any]]
+    stage2_results: List[Dict[str, Any]],
+    stage25_results: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
     """
     Stage 3: Chairman synthesizes final response.
@@ -124,35 +337,61 @@ async def stage3_synthesize_final(
         user_query: The original user query
         stage1_results: Individual model responses from Stage 1
         stage2_results: Rankings from Stage 2
+        stage25_results: Revised responses from Stage 2.5 (optional)
 
     Returns:
         Dict with 'model' and 'response' keys
     """
     # Build comprehensive context for chairman
-    stage1_text = "\n\n".join([
-        f"Model: {result['model']}\nResponse: {result['response']}"
-        for result in stage1_results
-    ])
 
-    stage2_text = "\n\n".join([
-        f"Model: {result['model']}\nRanking: {result['ranking']}"
-        for result in stage2_results
-    ])
+    # Check if we have revised answers
+    if stage25_results:
+        stage1_context_header = "STAGE 2.5 - Revised Responses (after Peer Review):"
+        responses_text = ""
+        for result in stage25_results:
+            model = result['model']
+            revised = result['revised_answer']
+            fix_log = result.get('fix_log', [])
+            passthrough = result.get('passthrough', False)
 
-    chairman_prompt = f"""You are the Chairman of an LLM Council. Multiple AI models have provided responses to a user's question, and then ranked each other's responses.
+            changes_text = "No changes (passed validation)." if passthrough else "Changes made:\n" + "\n".join([f"- {entry.get('issue')}: {entry.get('change')}" for entry in fix_log])
+
+            responses_text += f"\n\nModel: {model}\nStatus: {changes_text}\nResponse:\n{revised}"
+    else:
+        stage1_context_header = "STAGE 1 - Individual Responses:"
+        responses_text = "\n\n".join([
+            f"Model: {result['model']}\nResponse: {result['response']}"
+            for result in stage1_results
+        ])
+
+    stage2_text = ""
+    for result in stage2_results:
+        model_name = result['model']
+        if result.get('review_json'):
+            # Use structured JSON content
+            json_content = json.dumps(result['review_json'], indent=2, ensure_ascii=False)
+            stage2_text += f"\n\nModel: {model_name}\nReview (JSON): {json_content}"
+        else:
+            # Fallback to raw text
+            stage2_text += f"\n\nModel: {model_name}\nReview: {result['ranking']}"
+
+    chairman_prompt = f"""You are the Chairman of an LLM Council. Multiple AI models have provided responses to a user's question, peer-reviewed each other, and then refined their answers.
 
 Original Question: {user_query}
 
-STAGE 1 - Individual Responses:
-{stage1_text}
+{stage1_context_header}
+{responses_text}
 
-STAGE 2 - Peer Rankings:
+STAGE 2 - Peer Findings (Reference):
 {stage2_text}
 
-Your task as Chairman is to synthesize all of this information into a single, comprehensive, accurate answer to the user's original question. Consider:
-- The individual responses and their insights
-- The peer rankings and what they reveal about response quality
-- Any patterns of agreement or disagreement
+Your task as Chairman is to synthesize all of this information into a single, comprehensive, accurate answer to the user's original question.
+
+Important:
+- Use the REVISED responses from Stage 2.5 as your primary source material, as they have been improved based on peer review.
+- Check the 'fix_log' to see what was corrected.
+- Verify if the revised answers actually address the findings in Stage 2.
+- If a model failed to fix a critical issue, correct it in your final synthesis.
 
 Provide a clear, well-reasoned final answer that represents the council's collective wisdom:"""
 
@@ -178,14 +417,8 @@ def parse_ranking_from_text(ranking_text: str) -> List[str]:
     """
     Parse the FINAL RANKING section from the model's response.
 
-    Args:
-        ranking_text: The full text response from the model
-
-    Returns:
-        List of response labels in ranked order
+    Note: This is now mostly used as a fallback or by legacy functions.
     """
-    import re
-
     # Look for "FINAL RANKING:" section
     if "FINAL RANKING:" in ranking_text:
         # Extract everything after "FINAL RANKING:"
@@ -193,7 +426,6 @@ def parse_ranking_from_text(ranking_text: str) -> List[str]:
         if len(parts) >= 2:
             ranking_section = parts[1]
             # Try to extract numbered list format (e.g., "1. Response A")
-            # This pattern looks for: number, period, optional space, "Response X"
             numbered_matches = re.findall(r'\d+\.\s*Response [A-Z]', ranking_section)
             if numbered_matches:
                 # Extract just the "Response X" part
@@ -228,10 +460,12 @@ def calculate_aggregate_rankings(
     model_positions = defaultdict(list)
 
     for ranking in stage2_results:
-        ranking_text = ranking['ranking']
+        # Prioritize parsed ranking from JSON
+        parsed_ranking = ranking.get('parsed_ranking', [])
 
-        # Parse the ranking from the structured format
-        parsed_ranking = parse_ranking_from_text(ranking_text)
+        # Fallback to text parsing if empty
+        if not parsed_ranking and ranking.get('ranking'):
+             parsed_ranking = parse_ranking_from_text(ranking['ranking'])
 
         for position, label in enumerate(parsed_ranking, start=1):
             if label in label_to_model:
@@ -293,15 +527,15 @@ Title:"""
     return title
 
 
-async def run_full_council(user_query: str) -> Tuple[List, List, Dict, Dict]:
+async def run_full_council(user_query: str) -> Tuple[List, List, Dict, Dict, List]:
     """
-    Run the complete 3-stage council process.
+    Run the complete 3-stage council process (plus stage 2.5).
 
     Args:
         user_query: The user's question
 
     Returns:
-        Tuple of (stage1_results, stage2_results, stage3_result, metadata)
+        Tuple of (stage1_results, stage2_results, stage3_result, metadata, stage25_results)
     """
     # Stage 1: Collect individual responses
     stage1_results = await stage1_collect_responses(user_query)
@@ -311,19 +545,23 @@ async def run_full_council(user_query: str) -> Tuple[List, List, Dict, Dict]:
         return [], [], {
             "model": "error",
             "response": "All models failed to respond. Please try again."
-        }, {}
+        }, {}, []
 
-    # Stage 2: Collect rankings
-    stage2_results, label_to_model = await stage2_collect_rankings(user_query, stage1_results)
+    # Stage 2: Collect reviews (JSON)
+    stage2_results, label_to_model = await stage2_collect_reviews(user_query, stage1_results)
 
     # Calculate aggregate rankings
     aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
+
+    # Stage 2.5: Self-repair
+    stage25_results = await stage25_repair(user_query, stage1_results, stage2_results, label_to_model)
 
     # Stage 3: Synthesize final answer
     stage3_result = await stage3_synthesize_final(
         user_query,
         stage1_results,
-        stage2_results
+        stage2_results,
+        stage25_results
     )
 
     # Prepare metadata
@@ -332,4 +570,4 @@ async def run_full_council(user_query: str) -> Tuple[List, List, Dict, Dict]:
         "aggregate_rankings": aggregate_rankings
     }
 
-    return stage1_results, stage2_results, stage3_result, metadata
+    return stage1_results, stage2_results, stage3_result, metadata, stage25_results

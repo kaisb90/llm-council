@@ -47,13 +47,69 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings }) {
         <div className="ranking-model">
           {rankings[activeTab].model}
         </div>
-        <div className="ranking-content markdown-content">
-          <ReactMarkdown>
-            {deAnonymizeText(rankings[activeTab].ranking, labelToModel)}
-          </ReactMarkdown>
-        </div>
 
-        {rankings[activeTab].parsed_ranking &&
+        {rankings[activeTab].review_json ? (
+          <div className="review-json-content">
+             {Object.entries(rankings[activeTab].review_json.reviews || {}).map(([label, review]) => (
+               <div key={label} className="review-item">
+                 <h5>
+                   {label}
+                   {labelToModel && labelToModel[label] && (
+                     <span className="model-reveal"> ({labelToModel[label].split('/')[1]})</span>
+                   )}
+                 </h5>
+
+                 {review.bugs && review.bugs.length > 0 ? (
+                   <ul className="bugs-list">
+                     {review.bugs.map((bug, i) => (
+                       <li key={i} className={`bug-item severity-${bug.severity}`}>
+                         <span className="bug-severity">Sev {bug.severity}</span>
+                         <strong>{bug.title}</strong>
+                         {bug.evidence && (
+                           <div className="bug-evidence">
+                             "{bug.evidence.substring}"
+                           </div>
+                         )}
+                       </li>
+                     ))}
+                   </ul>
+                 ) : (
+                   <div className="no-bugs">No significant bugs found.</div>
+                 )}
+
+                 {review.notes && (
+                   <div className="review-notes">
+                     <em>{review.notes}</em>
+                   </div>
+                 )}
+               </div>
+             ))}
+
+             {rankings[activeTab].review_json.final_ranking && (
+               <div className="parsed-ranking">
+                 <strong>Final Ranking:</strong>
+                 <ol>
+                   {rankings[activeTab].review_json.final_ranking.map((label, i) => (
+                     <li key={i}>
+                       {label}
+                       {labelToModel && labelToModel[label] && (
+                         <span> ({labelToModel[label].split('/')[1]})</span>
+                       )}
+                     </li>
+                   ))}
+                 </ol>
+               </div>
+             )}
+          </div>
+        ) : (
+          <div className="ranking-content markdown-content">
+            <ReactMarkdown>
+              {deAnonymizeText(rankings[activeTab].ranking, labelToModel)}
+            </ReactMarkdown>
+          </div>
+        )}
+
+        {!rankings[activeTab].review_json && rankings[activeTab].parsed_ranking &&
          rankings[activeTab].parsed_ranking.length > 0 && (
           <div className="parsed-ranking">
             <strong>Extracted Ranking:</strong>

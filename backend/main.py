@@ -10,7 +10,7 @@ import json
 import asyncio
 
 from . import storage
-from .council import run_full_council, generate_conversation_title, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings
+from .council import run_full_council, generate_conversation_title, stage1_collect_responses, stage2_collect_reviews, stage25_repair, stage3_synthesize_final, calculate_aggregate_rankings
 
 app = FastAPI(title="LLM Council API")
 
@@ -101,8 +101,8 @@ async def send_message(conversation_id: str, request: SendMessageRequest):
         title = await generate_conversation_title(request.content)
         storage.update_conversation_title(conversation_id, title)
 
-    # Run the 3-stage council process
-    stage1_results, stage2_results, stage3_result, metadata = await run_full_council(
+    # Run the complete council process
+    stage1_results, stage2_results, stage3_result, metadata, stage25_results = await run_full_council(
         request.content
     )
 
@@ -111,13 +111,17 @@ async def send_message(conversation_id: str, request: SendMessageRequest):
         conversation_id,
         stage1_results,
         stage2_results,
-        stage3_result
+        stage3_result,
+        metadata=metadata,
+        stage25=stage25_results,
+        stage25_timestamp=datetime.utcnow().isoformat()
     )
 
     # Return the complete response with metadata
     return {
         "stage1": stage1_results,
         "stage2": stage2_results,
+        "stage25": stage25_results,
         "stage3": stage3_result,
         "metadata": metadata
     }
@@ -152,15 +156,20 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             stage1_results = await stage1_collect_responses(request.content)
             yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_results})}\n\n"
 
-            # Stage 2: Collect rankings
+            # Stage 2: Collect reviews
             yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
-            stage2_results, label_to_model = await stage2_collect_rankings(request.content, stage1_results)
+            stage2_results, label_to_model = await stage2_collect_reviews(request.content, stage1_results)
             aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
             yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings}})}\n\n"
 
+            # Stage 2.5: Self-repair
+            yield f"data: {json.dumps({'type': 'stage25_start'})}\n\n"
+            stage25_results = await stage25_repair(request.content, stage1_results, stage2_results, label_to_model)
+            yield f"data: {json.dumps({'type': 'stage25_complete', 'data': stage25_results})}\n\n"
+
             # Stage 3: Synthesize final answer
             yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
-            stage3_result = await stage3_synthesize_final(request.content, stage1_results, stage2_results)
+            stage3_result = await stage3_synthesize_final(request.content, stage1_results, stage2_results, stage25_results)
             yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
 
             # Wait for title generation if it was started
@@ -174,7 +183,10 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
                 conversation_id,
                 stage1_results,
                 stage2_results,
-                stage3_result
+                stage3_result,
+                metadata={'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings},
+                stage25=stage25_results,
+                stage25_timestamp=datetime.utcnow().isoformat()
             )
 
             # Send completion event
